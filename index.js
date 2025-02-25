@@ -223,24 +223,30 @@ app.delete('/books/:id', async (request, response) => {
 });
 
 
-// Add or Remove Book from Favorites
 app.post('/favorites', async (req, res) => {
     const { userId, bookId } = req.body;
+
     if (!userId || !bookId) {
         return res.status(400).json({ success: false, message: "User ID and Book ID are required" });
     }
 
     try {
-        // Check if the book is already in the user's favorites
-        const existingFavorite = await sql`SELECT * FROM favorites WHERE user_id = ${userId} AND book_id = ${bookId};`;
+        // بررسی اگر کتاب در علاقه‌مندی‌ها باشد
+        const existingFavorite = await sql`
+            SELECT * FROM favorites WHERE userId = ${userId} AND bookId = ${bookId};
+        `;
 
         if (existingFavorite.length > 0) {
-            // If it's already in favorites, remove it
-            await sql`DELETE FROM favorites WHERE user_id = ${userId} AND book_id = ${bookId};`;
+            // اگر کتاب قبلاً لایک شده باشد، آن را از علاقه‌مندی‌ها حذف می‌کنیم
+            await sql`
+                DELETE FROM favorites WHERE userId = ${userId} AND bookId = ${bookId};
+            `;
             return res.json({ success: true, message: "Book removed from favorites" });
         } else {
-            // If it's not in favorites, add it
-            await sql`INSERT INTO favorites (user_id, book_id) VALUES (${userId}, ${bookId});`;
+            // اگر کتاب در علاقه‌مندی‌ها نباشد، آن را اضافه می‌کنیم
+            await sql`
+                INSERT INTO favorites (userId, bookId) VALUES (${userId}, ${bookId});
+            `;
             return res.json({ success: true, message: "Book added to favorites" });
         }
     } catch (err) {
@@ -248,6 +254,7 @@ app.post('/favorites', async (req, res) => {
         res.status(500).json({ success: false, message: "Server error" });
     }
 });
+
 
 // Get all favorite books for a user
 app.get('/favorites/:userId', async (req, res) => {
@@ -263,12 +270,14 @@ app.get('/favorites/:userId', async (req, res) => {
             JOIN favorites f ON b.id = f.bookId
             WHERE f.userId = ${userId};
         `;
-        res.json(favorites);
+
+        res.json({ success: true, data: favorites });
     } catch (err) {
         console.error("Error fetching favorites:", err);
         res.status(500).json({ success: false, message: "Server error" });
     }
 });
+
 
 
 app.get("/books/search", async (req, res) => {
