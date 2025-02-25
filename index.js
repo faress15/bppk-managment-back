@@ -1,110 +1,234 @@
-DATABASE_URL = 'postgresql://books_owner:LHgyFhA35YKS@ep-delicate-flower-a58vqlxi.us-east-2.aws.neon.tech/books?sslmode=require'
-
-const express = require('express');
+require("dotenv").config();
+const express = require("express");
 const { neon } = require("@neondatabase/serverless");
-const app = express();
-const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
-const nodemailer = require('nodemailer');
+const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken");
+const nodemailer = require("nodemailer");
 
+const app = express();
+const port = process.env.PORT || 3000;
+
+const sql = neon(process.env.DATABASE_URL);
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// تنظیم CORS
 app.use((req, res, next) => {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
     next();
 });
 
+const transporter = nodemailer.createTransport({
+    service: "gmail",
+    auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS,
+    },
+});
 
 
-const port = 3000;
-const sql = neon(DATABASE_URL);
 
 
-// اضافه کردن اطلاعات کاربران به دیتابیس
-app.post('/signup', async (request, response) => {
-    const { email, password } = request.body;
-
-    // بررسی وجود کاربر
-    const user = await sql`SELECT * FROM users WHERE email = ${email};`;
-    if (user.length > 0) {
-        return response.status(400).send('User already exists');
+app.post("/login", async (req, res) => {
+    const { email, password } = req.body;
+    if (!email || !password) {
+        return res.status(400).json({ success: false, message: "email and password is required" });
     }
 
-    // هش کردن رمز عبور
-    const hashedPassword = await bcrypt.hash(password, 10);
+    try {
+        const user = await sql`SELECT * FROM users WHERE email = ${email} and password = ${password};`;
 
-    // ذخیره کاربر در دیتابیس
-    const newUser = await sql`INSERT INTO users (email, password) VALUES (${email}, ${hashedPassword}) RETURNING *;`;
-    
-    // ارسال کد تایید به ایمیل
-    const code = Math.floor(100000 + Math.random() * 900000); // کد تایید 6 رقمی
-    const transporter = nodemailer.createTransport({
-        service: 'gmail',
-        auth: {
-            user: 'your-email@gmail.com', // ایمیل ارسال‌کننده
-            pass: 'your-email-password'   // رمز عبور
+        if (user.length === 0) {
+            return res.status(401).json({ success: false, message: "user not found" });
         }
-    });
-    await transporter.sendMail({
-        from: 'your-email@gmail.com',
-        to: email,
-        subject: 'Verification Code',
-        text: `Your verification code is: ${code}`
-    });
 
-    // ذخیره کد تایید در دیتابیس
-    await sql`UPDATE users SET verification_code = ${code} WHERE email = ${email};`;
+        const token = jwt.sign({ id: user[0].id, email: user[0].email,  isAdmin: user[0].isadmin }, process.env.JWT_SECRET, { expiresIn: "1h" });
 
-    response.status(201).send('User registered, verification code sent.');
+        res.json({ success: true, token});
+    } catch (err) {
+        res.status(500).json({ success: false, message: "server error" });
+    }
 });
 
-// ورود (Login)
-app.post('/login', async (request, response) => {
-    const { email, password } = request.body;
+const crypto = require("crypto");
 
-    // بررسی وجود کاربر
-    const user = await sql`SELECT * FROM users WHERE email = ${email};`;
-    if (user.length === 0) {
-        return response.status(400).send('User not found');
+app.post("/signup", async (req, res) => {
+    const { email, password, isAdmin } = req.body;
+    if (!email || !password) {
+        return res.status(400).json({ success: false, message: "Email and password are required" });
     }
 
-    // بررسی رمز عبور
-    const validPassword = await bcrypt.compare(password, user[0].password);
-    if (!validPassword) {
-        return response.status(400).send('Invalid password');
+    try {
+        const existingUser = await sql`SELECT * FROM users WHERE email = ${email};`;
+        if (existingUser.length > 0) {
+            return res.status(400).json({ success: false, message: "This email already exists" });
+        }
+
+
+        await sql`INSERT INTO users (email, password, isadmin) VALUES (${email}, ${password}, ${isAdmin})`;
+
+        const verificationCode = crypto.randomInt(100000, 999999).toString();
+        const expiresAt = new Date(Date.now() + 2 * 60 * 1000); // انقضا در 10 دقیقه
+
+        await sql`INSERT INTO verification_codes (email, code, expires_at) VALUES (${email}, ${verificationCode}, ${expiresAt})`;
+
+        const mailOptions = {
+            from: process.env.EMAIL_USER,
+            to: email,
+            subject: "Email Verification Code",
+            text: `Your verification code is: ${verificationCode}. It will expire in 2 minutes.`,
+        };
+
+        transporter.sendMail(mailOptions, (error, info) => {
+            if (error) {
+                console.error("Error sending email:", error);
+                return res.status(500).json({ success: false, message: "Error sending verification email" });
+            }
+            res.json({ success: true, message: "User registered successfully. Verification email sent!" });
+        });
+
+    } catch (err) {
+        console.error("Error in signup:", err);
+        res.status(500).json({ success: false, message: "Server error" });
+    }
+});
+
+app.post("/verify-code", async (req, res) => {
+    const { email, code } = req.body;
+    if (!email || !code) {
+        return res.status(400).json({ success: false, message: "Email and code are required" });
     }
 
-    // صدور توکن JWT
-    const token = jwt.sign({ userId: user[0].id, email: user[0].email }, 'your-secret-key', { expiresIn: '1h' });
+    try {
+        const result = await sql`SELECT * FROM verification_codes WHERE email = ${email} AND code = ${code}`;
+        if (result.length === 0) {
+            return res.status(400).json({ success: false, message: "Invalid or expired code" });
+        }
 
-    response.send({ token });
-})
+        // بررسی زمان انقضا
+        const expiresAt = new Date(result[0].expires_at);
+        if (expiresAt < new Date()) {
+            return res.status(400).json({ success: false, message: "Code has expired" });
+        }
 
-app.get('/books', async (request, response) => {
-    const books = await sql`select * from books;`;
-    response.send(books);
+        // حذف کد پس از تأیید موفق
+        await sql`DELETE FROM verification_codes WHERE email = ${email}`;
 
+        res.json({ success: true, message: "Code verified successfully!" });
+
+    } catch (err) {
+        console.error("Error verifying code:", err);
+        res.status(500).json({ success: false, message: "Server error" });
+    }
 });
 
-app.post('/books', async (request, response) => {
-    const created = await sql`INSERT INTO books (title, author, description) VALUES (${request.body.title}, ${request.body.author1}, ${request.body.descriptionInput1});`;
-    response.send(created);
+app.post("/send-verification-code", async (req, res) => {
+    const { email } = req.body;
+    if (!email) {
+        return res.status(400).json({ success: false, message: "Email is required" });
+    }
+
+    try {
+        // تولید کد تأیید 6 رقمی
+        const verificationCode = crypto.randomInt(100000, 999999).toString();
+        const expiresAt = new Date(Date.now() + 2 * 60 * 1000); // انقضا در 2 دقیقه
+
+        // حذف کدهای قدیمی کاربر و ذخیره کد جدید
+        await sql`DELETE FROM verification_codes WHERE email = ${email}`;
+        await sql`INSERT INTO verification_codes (email, code, expires_at) VALUES (${email}, ${verificationCode}, ${expiresAt})`;
+
+        // ارسال ایمیل
+        const mailOptions = {
+            from: process.env.EMAIL_USER,
+            to: email,
+            subject: "Your Verification Code",
+            text: `Your verification code is: ${verificationCode}. It will expire in 2 minutes.`,
+        };
+
+        transporter.sendMail(mailOptions, (error, info) => {
+            if (error) {
+                console.error("Error sending email:", error);
+                return res.status(500).json({ success: false, message: "Error sending email" });
+            }
+            res.json({ success: true, message: "Verification code sent successfully!" });
+        });
+
+    } catch (err) {
+        console.error("Error sending verification code:", err);
+        res.status(500).json({ success: false, message: "Server error" });
+    }
 });
 
-app.put('/books/:id', async (request, response) => {
-    await sql`UPDATE books SET is_read = ${request.body.is_read} WHERE id = ${request.params.id};`;
-    const updatedBook = await sql`SELECT * FROM books WHERE id = ${request.params.id};`;
-    response.send(updatedBook[0]);
+
+
+app.get('/books', async (req, res) => {
+    try {
+        const books = await sql`SELECT * FROM books;`;
+        res.json(books);
+    } catch (err) {
+        console.error("Error fetching books:", err);
+        res.status(500).json({ error: "Server error" });
+    }
 });
+
+
+app.post('/books', async (req, res) => {
+    const { title, author, description, category, price, published_date } = req.body;
+
+    try {
+        const created = await sql`
+            INSERT INTO books (title, author, description, category, price, published_date) 
+            VALUES (${title}, ${author}, ${description}, ${category}, ${price}, ${published_date})
+            RETURNING *;
+        `;
+        res.status(201).json(created[0]);
+    } catch (err) {
+        console.error("Error adding book:", err);
+        res.status(500).json({ error: "Server error" });
+    }
+});
+
+
+app.put('/books/:id', async (req, res) => {
+    try {
+        const { title, author, description, category, price, published_date } = req.body;
+
+        await sql`
+            UPDATE books 
+            SET title = ${title}, 
+                author = ${author}, 
+                description = ${description}, 
+                category = ${category}, 
+                price = ${price}, 
+                published_date = ${published_date}
+            WHERE id = ${req.params.id};
+        `;
+
+        const updatedBook = await sql`SELECT * FROM books WHERE id = ${req.params.id};`;
+        res.json({ success: true, book: updatedBook[0] });
+    } catch (error) {
+        console.error("Error updating book:", error);
+        res.status(500).json({ success: false, message: "Server error" });
+    }
+});
+
+
 
 
 app.delete('/books/:id', async (request, response) => {
-    const deleted = await sql`delete from books where id = ${request.body.id};`;
-    response.send(deleted);
+    try {
+        const deleted = await sql`DELETE FROM books WHERE id = ${request.params.id};`;
+        response.json({ success: true, message: "Book deleted successfully" });
+    } catch (error) {
+        console.error("Error deleting book:", error);
+        response.status(500).json({ success: false, message: "Server error" });
+    }
 });
+
+
 
 
 
