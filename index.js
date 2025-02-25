@@ -307,6 +307,77 @@ app.get("/books/search", async (req, res) => {
 });
 
 
+app.post('/shopping-list', async (req, res) => {
+    const { userId, bookId } = req.body;
+
+    if (!userId || !bookId) {
+        return res.status(400).json({ success: false, message: "userId and bookId are required" });
+    }
+
+    try {
+        // بررسی می‌کنیم که آیا این کتاب قبلاً به لیست خرید این کاربر اضافه شده یا خیر
+        const existingBook = await sql`
+            SELECT * FROM shopping_list
+            WHERE userid = ${userId} AND bookid = ${bookId};
+        `;
+
+        if (existingBook.length > 0) {
+            return res.json({ success: true, message: "Book already in shopping list" });
+        } else {
+            // اگر کتاب در لیست خرید موجود نبود، آن را اضافه می‌کنیم
+            await sql`
+                INSERT INTO shopping_list (userid, bookid)
+                VALUES (${userId}, ${bookId});
+            `;
+            res.json({ success: true, message: "Book added to shopping list" });
+        }
+    } catch (err) {
+        console.error("Error adding book to shopping list:", err);
+        res.status(500).json({ success: false, message: "Server error" });
+    }
+});
+
+app.delete('/shopping-list/:shoppingListId', async (req, res) => {
+    const { shoppingListId } = req.params;
+
+    try {
+        const shoppingList = await sql`
+            DELETE FROM shopping_list
+            WHERE id = ${shoppingListId};
+        `;
+
+        const totalPrice = shoppingList.reduce((total, item) => total + item.price, 0);
+
+        res.json({ success: true, message: 'Book removed from shopping list', data: shoppingList, totalPrice });
+    } catch (err) {
+        console.error("Error removing from shopping list:", err);
+        res.status(500).json({ success: false, message: "Server error" });
+    }
+});
+
+
+app.get('/shopping-list/:userId', async (req, res) => {
+    const { userId } = req.params;
+
+    try {
+        const shoppingList = await sql`
+            SELECT s.id, b.title, b.author, b.price
+            FROM shopping_list s
+            JOIN books b ON s.bookid = b.id
+            WHERE s.userid = ${userId};
+        `;
+
+        // محاسبه مجموع قیمت لیست خرید
+        const totalPrice = shoppingList.reduce((total, item) => total + item.price, 0);
+
+        res.json({ success: true, data: shoppingList, totalPrice });
+    } catch (err) {
+        console.error("Error fetching shopping list:", err);
+        res.status(500).json({ success: false, message: "Server error" });
+    }
+});
+
+
 
 
 
