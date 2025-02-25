@@ -6,9 +6,10 @@ const jwt = require("jsonwebtoken");
 const nodemailer = require("nodemailer");
 
 const app = express();
-const port = process.env.PORT || 3000;
+const port = process.env.PORT;
 
 const sql = neon(process.env.DATABASE_URL);
+const crypto = require("crypto");
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -29,7 +30,7 @@ const transporter = nodemailer.createTransport({
 });
 
 
-
+// login and sigup
 
 app.post("/login", async (req, res) => {
     const { email, password } = req.body;
@@ -44,15 +45,15 @@ app.post("/login", async (req, res) => {
             return res.status(401).json({ success: false, message: "user not found" });
         }
 
-        const token = jwt.sign({ id: user[0].id, email: user[0].email,  isAdmin: user[0].isadmin }, process.env.JWT_SECRET, { expiresIn: "1h" });
+        const token = jwt.sign({ id: user[0].id, email: user[0].email, isAdmin: user[0].isadmin }, process.env.JWT_SECRET, { expiresIn: "1h" });
 
-        res.json({ success: true, token});
+        res.json({ success: true, token });
     } catch (err) {
         res.status(500).json({ success: false, message: "server error" });
     }
 });
 
-const crypto = require("crypto");
+
 
 app.post("/signup", async (req, res) => {
     const { email, password, isAdmin } = req.body;
@@ -70,7 +71,7 @@ app.post("/signup", async (req, res) => {
         await sql`INSERT INTO users (email, password, isadmin) VALUES (${email}, ${password}, ${isAdmin})`;
 
         const verificationCode = crypto.randomInt(100000, 999999).toString();
-        const expiresAt = new Date(Date.now() + 2 * 60 * 1000); // انقضا در 10 دقیقه
+        const expiresAt = new Date(Date.now() + 2 * 60 * 1000);
 
         await sql`INSERT INTO verification_codes (email, code, expires_at) VALUES (${email}, ${verificationCode}, ${expiresAt})`;
 
@@ -130,7 +131,7 @@ app.post("/send-verification-code", async (req, res) => {
 
     try {
         const verificationCode = crypto.randomInt(100000, 999999).toString();
-        const expiresAt = new Date(Date.now() + 2 * 60 * 1000); 
+        const expiresAt = new Date(Date.now() + 2 * 60 * 1000);
 
         await sql`DELETE FROM verification_codes WHERE email = ${email}`;
         await sql`INSERT INTO verification_codes (email, code, expires_at) VALUES (${email}, ${verificationCode}, ${expiresAt})`;
@@ -157,6 +158,7 @@ app.post("/send-verification-code", async (req, res) => {
 });
 
 
+// books
 
 app.get('/books', async (req, res) => {
     try {
@@ -223,6 +225,8 @@ app.delete('/books/:id', async (request, response) => {
 });
 
 
+// favorites
+
 app.post('/favorites', async (req, res) => {
     const { userId, bookId } = req.body;
 
@@ -231,19 +235,19 @@ app.post('/favorites', async (req, res) => {
     }
 
     try {
-        // بررسی اگر کتاب در علاقه‌مندی‌ها باشد
+
         const existingFavorite = await sql`
             SELECT * FROM favorites WHERE userId = ${userId} AND bookId = ${bookId};
         `;
 
         if (existingFavorite.length > 0) {
-            // اگر کتاب قبلاً لایک شده باشد، آن را از علاقه‌مندی‌ها حذف می‌کنیم
+
             await sql`
                 DELETE FROM favorites WHERE userId = ${userId} AND bookId = ${bookId};
             `;
             return res.json({ success: true, message: "Book removed from favorites" });
         } else {
-            // اگر کتاب در علاقه‌مندی‌ها نباشد، آن را اضافه می‌کنیم
+
             await sql`
                 INSERT INTO favorites (userId, bookId) VALUES (${userId}, ${bookId});
             `;
@@ -256,7 +260,7 @@ app.post('/favorites', async (req, res) => {
 });
 
 
-// Get all favorite books for a user
+
 app.get('/favorites/:userId', async (req, res) => {
     const { userId } = req.params;
     if (!userId) {
@@ -279,6 +283,7 @@ app.get('/favorites/:userId', async (req, res) => {
 });
 
 
+// search
 
 app.get("/books/search", async (req, res) => {
     const { type, query } = req.query;
@@ -307,6 +312,8 @@ app.get("/books/search", async (req, res) => {
 });
 
 
+// shoppingList
+
 app.post('/shopping-list', async (req, res) => {
     const { userId, bookId } = req.body;
 
@@ -315,7 +322,7 @@ app.post('/shopping-list', async (req, res) => {
     }
 
     try {
-        // بررسی می‌کنیم که آیا این کتاب قبلاً به لیست خرید این کاربر اضافه شده یا خیر
+
         const existingBook = await sql`
             SELECT * FROM shopping_list
             WHERE userid = ${userId} AND bookid = ${bookId};
@@ -324,7 +331,7 @@ app.post('/shopping-list', async (req, res) => {
         if (existingBook.length > 0) {
             return res.json({ success: true, message: "Book already in shopping list" });
         } else {
-            // اگر کتاب در لیست خرید موجود نبود، آن را اضافه می‌کنیم
+
             await sql`
                 INSERT INTO shopping_list (userid, bookid)
                 VALUES (${userId}, ${bookId});
@@ -367,7 +374,7 @@ app.get('/shopping-list/:userId', async (req, res) => {
             WHERE s.userid = ${userId};
         `;
 
-        // محاسبه مجموع قیمت لیست خرید
+
         const totalPrice = shoppingList.reduce((total, item) => total + item.price, 0);
 
         res.json({ success: true, data: shoppingList, totalPrice });
