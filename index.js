@@ -13,7 +13,6 @@ const sql = neon(process.env.DATABASE_URL);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// تنظیم CORS
 app.use((req, res, next) => {
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE");
@@ -108,13 +107,11 @@ app.post("/verify-code", async (req, res) => {
             return res.status(400).json({ success: false, message: "Invalid or expired code" });
         }
 
-        // بررسی زمان انقضا
         const expiresAt = new Date(result[0].expires_at);
         if (expiresAt < new Date()) {
             return res.status(400).json({ success: false, message: "Code has expired" });
         }
 
-        // حذف کد پس از تأیید موفق
         await sql`DELETE FROM verification_codes WHERE email = ${email}`;
 
         res.json({ success: true, message: "Code verified successfully!" });
@@ -132,15 +129,12 @@ app.post("/send-verification-code", async (req, res) => {
     }
 
     try {
-        // تولید کد تأیید 6 رقمی
         const verificationCode = crypto.randomInt(100000, 999999).toString();
-        const expiresAt = new Date(Date.now() + 2 * 60 * 1000); // انقضا در 2 دقیقه
+        const expiresAt = new Date(Date.now() + 2 * 60 * 1000); 
 
-        // حذف کدهای قدیمی کاربر و ذخیره کد جدید
         await sql`DELETE FROM verification_codes WHERE email = ${email}`;
         await sql`INSERT INTO verification_codes (email, code, expires_at) VALUES (${email}, ${verificationCode}, ${expiresAt})`;
 
-        // ارسال ایمیل
         const mailOptions = {
             from: process.env.EMAIL_USER,
             to: email,
@@ -229,6 +223,79 @@ app.delete('/books/:id', async (request, response) => {
 });
 
 
+// Add or Remove Book from Favorites
+app.post('/favorites', async (req, res) => {
+    const { userId, bookId } = req.body;
+    if (!userId || !bookId) {
+        return res.status(400).json({ success: false, message: "User ID and Book ID are required" });
+    }
+
+    try {
+        // Check if the book is already in the user's favorites
+        const existingFavorite = await sql`SELECT * FROM favorites WHERE user_id = ${userId} AND book_id = ${bookId};`;
+
+        if (existingFavorite.length > 0) {
+            // If it's already in favorites, remove it
+            await sql`DELETE FROM favorites WHERE user_id = ${userId} AND book_id = ${bookId};`;
+            return res.json({ success: true, message: "Book removed from favorites" });
+        } else {
+            // If it's not in favorites, add it
+            await sql`INSERT INTO favorites (user_id, book_id) VALUES (${userId}, ${bookId});`;
+            return res.json({ success: true, message: "Book added to favorites" });
+        }
+    } catch (err) {
+        console.error("Error adding/removing from favorites:", err);
+        res.status(500).json({ success: false, message: "Server error" });
+    }
+});
+
+// Get all favorite books for a user
+app.get('/favorites/:userId', async (req, res) => {
+    const { userId } = req.params;
+    if (!userId) {
+        return res.status(400).json({ success: false, message: "User ID is required" });
+    }
+
+    try {
+        const favorites = await sql`
+            SELECT *
+            FROM books b
+            JOIN favorites f ON b.id = f.bookId
+            WHERE f.userId = ${userId};
+        `;
+        res.json(favorites);
+    } catch (err) {
+        console.error("Error fetching favorites:", err);
+        res.status(500).json({ success: false, message: "Server error" });
+    }
+});
+
+
+app.get("/books/search", async (req, res) => {
+    const { type, query } = req.query;
+
+    if (!type || !query) {
+        return res.status(400).json({ success: false, message: "Invalid search parameters" });
+    }
+
+    try {
+        let books;
+        if (type === "title") {
+            books = await sql`SELECT * FROM books WHERE title ILIKE ${"%" + query + "%"};`;
+        } else if (type === "author") {
+            books = await sql`SELECT * FROM books WHERE author ILIKE ${"%" + query + "%"};`;
+        } else if (type === "category") {
+            books = await sql`SELECT * FROM books WHERE category ILIKE ${"%" + query + "%"};`;
+        } else {
+            return res.status(400).json({ success: false, message: "Invalid search type" });
+        }
+
+        res.json(books);
+    } catch (err) {
+        console.error("Error searching books:", err);
+        res.status(500).json({ success: false, message: "Server error" });
+    }
+});
 
 
 
